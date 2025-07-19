@@ -304,47 +304,52 @@ class SketchfabDownloader(ObjaverseSource):
             download_dir is None, the path will be None.
         """
         hf_url = f"https://huggingface.co/datasets/allenai/objaverse/resolve/main/{hf_object_path}"
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # download the file locally
+                temp_path = os.path.join(temp_dir, hf_object_path)
+                os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+                temp_path_tmp = f"{temp_path}.tmp"
+                with open(temp_path_tmp, "wb") as file:
+                    with urllib.request.urlopen(hf_url) as response:
+                        file.write(response.read())
+                os.rename(temp_path_tmp, temp_path)
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # download the file locally
-            temp_path = os.path.join(temp_dir, hf_object_path)
-            os.makedirs(os.path.dirname(temp_path), exist_ok=True)
-            temp_path_tmp = f"{temp_path}.tmp"
-            with open(temp_path_tmp, "wb") as file:
-                with urllib.request.urlopen(hf_url) as response:
-                    file.write(response.read())
-            os.rename(temp_path_tmp, temp_path)
+                # get the sha256 of the downloaded file
+                sha256 = get_file_hash(temp_path)
 
-            # get the sha256 of the downloaded file
-            sha256 = get_file_hash(temp_path)
+                if sha256 == expected_sha256:
+                    if handle_found_object is not None:
+                        handle_found_object(
+                            local_path=temp_path,
+                            file_identifier=file_identifier,
+                            sha256=sha256,
+                            metadata={},
+                        )
+                else:
+                    if handle_modified_object is not None:
+                        handle_modified_object(
+                            local_path=temp_path,
+                            file_identifier=file_identifier,
+                            new_sha256=sha256,
+                            old_sha256=expected_sha256,
+                            metadata={},
+                        )
 
-            if sha256 == expected_sha256:
-                if handle_found_object is not None:
-                    handle_found_object(
-                        local_path=temp_path,
-                        file_identifier=file_identifier,
-                        sha256=sha256,
-                        metadata={},
-                    )
-            else:
-                if handle_modified_object is not None:
-                    handle_modified_object(
-                        local_path=temp_path,
-                        file_identifier=file_identifier,
-                        new_sha256=sha256,
-                        old_sha256=expected_sha256,
-                        metadata={},
-                    )
+                if download_dir is not None:
+                    filename = os.path.join(download_dir, "hf-objaverse-v1", hf_object_path)
+                    fs, path = fsspec.core.url_to_fs(filename)
+                    fs.makedirs(os.path.dirname(path), exist_ok=True)
+                    fs.put(temp_path, path)
+                else:
+                    path = None
 
-            if download_dir is not None:
-                filename = os.path.join(download_dir, "hf-objaverse-v1", hf_object_path)
-                fs, path = fsspec.core.url_to_fs(filename)
-                fs.makedirs(os.path.dirname(path), exist_ok=True)
-                fs.put(temp_path, path)
-            else:
-                path = None
-
-        return file_identifier, path
+            return file_identifier, path
+        except Exception as e:
+            logger.error(
+                f"Failed to download {file_identifier} from {hf_url}. Error: {e}"
+            )
+            return file_identifier, None
 
     @classmethod
     def _parallel_download_object(cls, args):
